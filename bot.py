@@ -26,7 +26,7 @@ import itertools
 import warnings
 warnings.filterwarnings("ignore")
 
-TOKEN = '6074844285:AAHN-_TYEwklIM_mYtN4n8UjryP9zS_P350'
+TOKEN = 'your token'
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot=bot, storage=storage)
