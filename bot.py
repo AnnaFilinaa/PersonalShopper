@@ -74,6 +74,9 @@ embeddings_shoe = embeddings_by_category['shoe']
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 resnet = models.resnet50(pretrained=True).to(device)
+resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
+resnet.eval()
+
 
 
 def generate_recommendations(query, embeddings):
@@ -170,11 +173,14 @@ def get_clothes(img_path):
 
 
 preprocess = transforms.Compose([
-    transforms.Resize(224),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+        transforms.Resize(224),
+        transforms.CenterCrop(224),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
+        transforms.RandomRotation(15),
+        transforms.RandomResizedCrop(size=224, scale=(0.8, 1.0)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
 
 def preprocess_image(image_path):
@@ -187,6 +193,7 @@ def get_embedding(image_path):
     input_var = preprocess_image(image_path)
     with torch.no_grad():
         output = resnet(input_var)
+        output = output.view(1, 2048)   
         embedding = torch.nn.functional.normalize(output)
     return embedding
 
