@@ -315,7 +315,7 @@ async def process_method(message: types.Message, state: FSMContext):
         brand = row['brand']
         price = row['price']
         page_url = row['page_url']
-        response += f"[{name}]({page_url})\n{brand}\n{price}\n\n"
+        response += f"<a href='{page_url}'>{name}</a>\n{brand}\n{price}\n\n"
         image_url = row['image_url']
         image_data = await fetch_image(image_url)
 
@@ -335,7 +335,7 @@ async def process_method(message: types.Message, state: FSMContext):
     await state.reset_state()
 
     # Reply with a new message
-    await message.reply(md.text(response))
+    await message.reply(response, parse_mode='HTML', disable_web_page_preview=True)
     await message.reply("Выбери как бы ты хотела подобрать образ:",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
@@ -387,7 +387,7 @@ async def process_photo(message: types.Message, state: FSMContext):
         brand = row['brand']
         price = row['price']
         page_url = row['page_url']
-        response2 += f"[{name}]({page_url})\n{brand}\n{price}\n\n"
+        response2 += f"<a href='{page_url}'>{name}</a>\n{brand}\n{price}\n\n"
         image_url = row['image_url']
         image_data = await fetch_image(image_url)
 
@@ -406,7 +406,7 @@ async def process_photo(message: types.Message, state: FSMContext):
     # Reset the state to restart the process
     await state.reset_state()
 
-    await message.reply(md.text(response2))
+    await message.reply(response2, parse_mode='HTML', disable_web_page_preview=True)
     await message.reply("Выбери как бы ты хотела подобрать образ:",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
