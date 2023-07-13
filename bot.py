@@ -5,20 +5,13 @@ import pickle
 from collections import defaultdict
 from transformers import AutoTokenizer, AutoModel
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from functools import partial
 from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils.exceptions import MessageNotModified
-from enum import Enum
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import aiohttp
 import os
 from PIL import Image
 import io
-from aiogram.utils import markdown as md
-import base64
-import telebot
 from ultralytics import YOLO
 import torchvision.transforms as transforms
 import torchvision.models as models
@@ -71,14 +64,10 @@ embeddings_dress = embeddings_by_category['dress']
 embeddings_bag = embeddings_by_category['bag']
 embeddings_shoe = embeddings_by_category['shoe']
 
-
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 resnet = models.resnet50(pretrained=True).to(device)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
 resnet.eval()
-
-
 
 def generate_recommendations(query, embeddings):
     top_elements_per_query = defaultdict(lambda: defaultdict(list))
@@ -240,12 +229,6 @@ def find_similar_images(query_image_path, label, top_k=1):
     return similar_images, similar_distances
 
 
-class StyleChoice(StatesGroup):
-    process_style = State()
-    process_method = State()
-    process_photo = State()
-
-
 async def fetch_image(image_url):
     try:
         async with aiohttp.ClientSession() as session:
@@ -276,30 +259,11 @@ async def save_image(image_bytes, file_name):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message, state: FSMContext):
-    await message.reply("Привет! Я твой Personal Shopper. Давай подберем образы. Выбери как бы ты хотела их подобрать?",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
-                            [InlineKeyboardButton(text="По тексту", callback_data="text")],
-                        ]))
-    await StyleChoice.process_style.set()
+    await message.reply("Привет! Я твой Personal Shopper. Давай подберем образы. Загрузи фото или опиши желаемый образ.")
 
 
-@dp.callback_query_handler(state=StyleChoice.process_style)
-async def process_style_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    method = callback_query.data
-
-    if method == "photo":
-        await bot.send_message(callback_query.from_user.id, "Загрузите фото желаемого образа")
-        await StyleChoice.process_photo.set()
-    elif method == "text":
-        await bot.send_message(callback_query.from_user.id, "Какой образ вы хотели бы подобрать?")
-        await StyleChoice.process_method.set()
-
-    await callback_query.answer()
-
-
-@dp.message_handler(state=StyleChoice.process_method)
-async def process_method(message: types.Message, state: FSMContext):
+@dp.message_handler(content_types=types.ContentType.TEXT)
+async def process_text(message: types.Message, state: FSMContext):
     style = message.text.strip()
 
     await state.update_data(outfit=message.text.strip())  # Сохраняем ответ пользователя в переменной outfit
@@ -308,7 +272,7 @@ async def process_method(message: types.Message, state: FSMContext):
 
     top_elements_per_category_df = generate_recommendations(query, embeddings_text)
 
-    response = "Рекомендации:\n\n"
+    response = ""
     images = []
 
     for _, row in top_elements_per_category_df.iterrows():
@@ -340,15 +304,10 @@ async def process_method(message: types.Message, state: FSMContext):
     else :
         await message.reply("Ничего не удалось найти.")
     
-    await message.reply("Выбери как бы ты хотела подобрать образ:",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
-                            [InlineKeyboardButton(text="По тексту", callback_data="text")],
-                        ]))
-    await StyleChoice.process_style.set()
+    await message.reply("Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
 
 
-@dp.message_handler(content_types=types.ContentType.PHOTO, state=StyleChoice.process_photo)
+@dp.message_handler(content_types=types.ContentType.PHOTO)
 async def process_photo(message: types.Message, state: FSMContext):
     photo = message.photo[-1]
     photo_id = photo.file_id
@@ -360,7 +319,6 @@ async def process_photo(message: types.Message, state: FSMContext):
         os.makedirs(folder_temporary)
     photo_file_path = f"{folder_temporary}/photo.jpg"  # Путь к файлу, в который будет сохранена фотография
     await photo_path.download(photo_file_path)
-
 
     cloth_imgs, cloth_info = get_clothes(photo_file_path)
         
@@ -385,7 +343,7 @@ async def process_photo(message: types.Message, state: FSMContext):
         flattened_paths = list(itertools.chain.from_iterable(saved_image_paths))
         temp_basket2 = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
 
-        response2 = "Рекомендации:\n\n"
+        response2 = ""
         images2 = []
 
         for _, row in temp_basket2.iterrows():
@@ -418,12 +376,8 @@ async def process_photo(message: types.Message, state: FSMContext):
     else :
         await message.reply("Ничего не удалось найти.")
     
-    await message.reply("Выбери как бы ты хотела подобрать образ:",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
-                            [InlineKeyboardButton(text="По тексту", callback_data="text")],
-                        ]))
-    await StyleChoice.process_style.set()
+    await message.reply("Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
+
 
 # handle the cases when this exception raises 
 @dp.errors_handler(exception=MessageNotModified)  
