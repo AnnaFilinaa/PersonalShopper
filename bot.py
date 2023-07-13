@@ -9,6 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from functools import partial
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.utils.exceptions import MessageNotModified
 from enum import Enum
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import aiohttp
@@ -313,29 +314,32 @@ async def process_method(message: types.Message, state: FSMContext):
     for _, row in top_elements_per_category_df.iterrows():
         name = row['name']
         brand = row['brand']
-        price = row['price']
         page_url = row['page_url']
-        response += f"<a href='{page_url}'>{name}</a>\n{brand}\n{price}\n\n"
+        response += f"<a href='{page_url}'>{name}</a>\n{brand}\n\n"
         image_url = row['image_url']
         image_data = await fetch_image(image_url)
 
         # Append the image bytes to the list
         images.append(image_data)
 
-    media_group = []
-    for image_bytes in images:
-        image_file = io.BytesIO(image_bytes)
-        media_group.append(types.InputMediaPhoto(image_file))
-    await bot.send_media_group(message.chat.id, media=media_group)
+    if len(images) > 0 :
+        media_group = []
+        for image_bytes in images:
+            image_file = io.BytesIO(image_bytes)
+            media_group.append(types.InputMediaPhoto(image_file))
+        await bot.send_media_group(message.chat.id, media=media_group)
 
-    images.clear()
-    top_elements_per_category_df = pd.DataFrame()
+        images.clear()
+        top_elements_per_category_df = pd.DataFrame()
 
-    # Reset the state to restart the process
-    await state.reset_state()
+        # Reset the state to restart the process
+        await state.reset_state()
 
-    # Reply with a new message
-    await message.reply(response, parse_mode='HTML', disable_web_page_preview=True)
+        # Reply with a new message
+        await message.reply(response, parse_mode='HTML', disable_web_page_preview=True)
+    else :
+        await message.reply("Ничего не удалось найти.")
+    
     await message.reply("Выбери как бы ты хотела подобрать образ:",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
@@ -357,56 +361,63 @@ async def process_photo(message: types.Message, state: FSMContext):
     photo_file_path = f"{folder_temporary}/photo.jpg"  # Путь к файлу, в который будет сохранена фотография
     await photo_path.download(photo_file_path)
 
+
     cloth_imgs, cloth_info = get_clothes(photo_file_path)
-    
-    
-    # Сохранение изображений в папку
-    saved_image_paths = []
-
-# Обработка каждой вещи в cloth_info
-    for cloth_img, label in zip(cloth_imgs, cloth_info):
-
+        
+    if len(cloth_imgs) > 0 :  
+  
         # Сохранение изображений в папку
-        folder_boxes = 'boxes'
-        if not os.path.exists(folder_boxes):
-            os.makedirs(folder_boxes)
-        image_path = f"{folder_boxes}/{label}.jpg"
-        cloth_img.save(image_path)
-        # saved_image_paths.append(image_path)
-        similar_images, similar_distances = find_similar_images(image_path, label, top_k=1)
-        saved_image_paths.append(similar_images)
+        saved_image_paths = []
 
-    flattened_paths = list(itertools.chain.from_iterable(saved_image_paths))
-    temp_basket2 = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
+        # Обработка каждой вещи в cloth_info
+        for cloth_img, label in zip(cloth_imgs, cloth_info):
 
-    response2 = "Рекомендации:\n\n"
-    images2 = []
+            # Сохранение изображений в папку
+            folder_boxes = 'boxes'
+            if not os.path.exists(folder_boxes):
+                os.makedirs(folder_boxes)
+            image_path = f"{folder_boxes}/{label}.jpg"
+            cloth_img.save(image_path)
+            # saved_image_paths.append(image_path)
+            similar_images, similar_distances = find_similar_images(image_path, label, top_k=1)
+            saved_image_paths.append(similar_images)
 
-    for _, row in temp_basket2.iterrows():
-        name = row['name']
-        brand = row['brand']
-        price = row['price']
-        page_url = row['page_url']
-        response2 += f"<a href='{page_url}'>{name}</a>\n{brand}\n{price}\n\n"
-        image_url = row['image_url']
-        image_data = await fetch_image(image_url)
+        flattened_paths = list(itertools.chain.from_iterable(saved_image_paths))
+        temp_basket2 = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
 
-        # Append the image bytes to the list
-        images2.append(image_data)
+        response2 = "Рекомендации:\n\n"
+        images2 = []
 
-    media_group = []
-    for image_bytes in images2:
-        image_file = io.BytesIO(image_bytes)
-        media_group.append(types.InputMediaPhoto(image_file))
-    await bot.send_media_group(message.chat.id, media=media_group)
+        for _, row in temp_basket2.iterrows():
+            name = row['name']
+            brand = row['brand']
+            page_url = row['page_url']
+            response2 += f"<a href='{page_url}'>{name}</a>\n{brand}\n\n"
+            image_url = row['image_url']
+            image_data = await fetch_image(image_url)
 
-    images2.clear()
-    temp_basket2 = pd.DataFrame()
+            # Append the image bytes to the list
+            images2.append(image_data)
 
-    # Reset the state to restart the process
-    await state.reset_state()
+        if len(images2) > 0 :
+            media_group = []
+            for image_bytes in images2:
+                image_file = io.BytesIO(image_bytes)
+                media_group.append(types.InputMediaPhoto(image_file))
+            await bot.send_media_group(message.chat.id, media=media_group)
 
-    await message.reply(response2, parse_mode='HTML', disable_web_page_preview=True)
+            images2.clear()
+            temp_basket2 = pd.DataFrame()
+
+            # Reset the state to restart the process
+            await state.reset_state()
+
+            await message.reply(response2, parse_mode='HTML', disable_web_page_preview=True)
+        else :
+            await message.reply("Ничего не удалось найти.")
+    else :
+        await message.reply("Ничего не удалось найти.")
+    
     await message.reply("Выбери как бы ты хотела подобрать образ:",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="По фотографии", callback_data="photo")],
@@ -414,6 +425,10 @@ async def process_photo(message: types.Message, state: FSMContext):
                         ]))
     await StyleChoice.process_style.set()
 
+# handle the cases when this exception raises 
+@dp.errors_handler(exception=MessageNotModified)  
+async def message_not_modified_handler(update, error): 
+    return True # errors_handler must return True if error was handled correctly 
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
