@@ -259,23 +259,15 @@ async def save_image(image_bytes, file_name):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message, state: FSMContext):
-    await message.reply("Привет! Я твой Personal Shopper. Давай подберем образы. Загрузи фото или опиши желаемый образ.")
+    user = message.from_user.username
+    text = f"Привет, @{user}! Я твой Personal Shopper. Давай подберем новый гардероб. Пришли мне фотографию желаемого образа или опиши его."
+    await message.reply(text)
 
-
-@dp.message_handler(content_types=types.ContentType.TEXT)
-async def process_text(message: types.Message, state: FSMContext):
-    style = message.text.strip()
-
-    await state.update_data(outfit=message.text.strip())  # Сохраняем ответ пользователя в переменной outfit
-
-    query = style
-
-    top_elements_per_category_df = generate_recommendations(query, embeddings_text)
-
+async def process_basket(message : types.Message, basket_df : pd.DataFrame) :
     response = ""
     images = []
 
-    for _, row in top_elements_per_category_df.iterrows():
+    for _, row in basket_df.iterrows():
         name = row['name']
         brand = row['brand']
         page_url = row['page_url']
@@ -294,17 +286,25 @@ async def process_text(message: types.Message, state: FSMContext):
         await bot.send_media_group(message.chat.id, media=media_group)
 
         images.clear()
-        top_elements_per_category_df = pd.DataFrame()
-
-        # Reset the state to restart the process
-        await state.reset_state()
 
         # Reply with a new message
         await message.reply(response, parse_mode='HTML', disable_web_page_preview=True)
     else :
-        await message.reply("Ничего не удалось найти.")
+        await message.reply("К сожалению, я не нашел ничего подходящего:(")
     
-    await message.reply("Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
+    await message.bot.send_message(message.from_user.id,
+                                   "Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
+
+
+@dp.message_handler(content_types=types.ContentType.TEXT)
+async def process_text(message: types.Message, state: FSMContext):
+    
+    query = message.text.strip()
+
+    await state.update_data(outfit=query)  # Сохраняем ответ пользователя в переменной outfit
+
+    basket_df = generate_recommendations(query, embeddings_text)
+    await process_basket(message, basket_df)
 
 
 @dp.message_handler(content_types=types.ContentType.PHOTO)
@@ -312,12 +312,13 @@ async def process_photo(message: types.Message, state: FSMContext):
     photo = message.photo[-1]
     photo_id = photo.file_id
     photo_path = await bot.get_file(photo_id)
+    chat_id = message.chat.id
     
     # Загрузка фотографии и сохранение ее на диске
     folder_temporary = 'temporary_request'
     if not os.path.exists(folder_temporary):
         os.makedirs(folder_temporary)
-    photo_file_path = f"{folder_temporary}/photo.jpg"  # Путь к файлу, в который будет сохранена фотография
+    photo_file_path = f"{folder_temporary}/{chat_id}_photo.jpg"  # Путь к файлу, в который будет сохранена фотография
     await photo_path.download(photo_file_path)
 
     cloth_imgs, cloth_info = get_clothes(photo_file_path)
@@ -334,50 +335,17 @@ async def process_photo(message: types.Message, state: FSMContext):
             folder_boxes = 'boxes'
             if not os.path.exists(folder_boxes):
                 os.makedirs(folder_boxes)
-            image_path = f"{folder_boxes}/{label}.jpg"
+            image_path = f"{folder_boxes}/{chat_id}_{label}.jpg"
             cloth_img.save(image_path)
             # saved_image_paths.append(image_path)
             similar_images, similar_distances = find_similar_images(image_path, label, top_k=1)
             saved_image_paths.append(similar_images)
 
         flattened_paths = list(itertools.chain.from_iterable(saved_image_paths))
-        temp_basket2 = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
-
-        response2 = ""
-        images2 = []
-
-        for _, row in temp_basket2.iterrows():
-            name = row['name']
-            brand = row['brand']
-            page_url = row['page_url']
-            response2 += f"<a href='{page_url}'>{name}</a>\n{brand}\n\n"
-            image_url = row['image_url']
-            image_data = await fetch_image(image_url)
-
-            # Append the image bytes to the list
-            images2.append(image_data)
-
-        if len(images2) > 0 :
-            media_group = []
-            for image_bytes in images2:
-                image_file = io.BytesIO(image_bytes)
-                media_group.append(types.InputMediaPhoto(image_file))
-            await bot.send_media_group(message.chat.id, media=media_group)
-
-            images2.clear()
-            temp_basket2 = pd.DataFrame()
-
-            # Reset the state to restart the process
-            await state.reset_state()
-
-            await message.reply(response2, parse_mode='HTML', disable_web_page_preview=True)
-        else :
-            await message.reply("Ничего не удалось найти.")
+        basket_df = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
+        await process_basket(message, basket_df)
     else :
-        await message.reply("Ничего не удалось найти.")
-    
-    await message.reply("Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
-
+        await message.reply("К сожалению, я не нашел ничего подходящего:(")
 
 # handle the cases when this exception raises 
 @dp.errors_handler(exception=MessageNotModified)  
