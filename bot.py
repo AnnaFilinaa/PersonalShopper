@@ -24,7 +24,7 @@ import emoji
 import warnings
 warnings.filterwarnings("ignore")
 
-TOKEN = 'your token'
+TOKEN = '6306800642:AAHsHhBtnMg3jHpp6UbyqZuDGOgXjrXO5oU'
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot=bot, storage=storage)
