@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, executor, types
 from aiogram.dispatcher import FSMContext
 from aiogram.utils.exceptions import MessageNotModified
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters.state import State, StatesGroup
 import aiohttp
 import os
 from PIL import Image
@@ -17,6 +18,9 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 import itertools
 
+from googletrans import Translator
+import emoji
+
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -24,6 +28,18 @@ TOKEN = 'your token'
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot=bot, storage=storage)
+
+# strings
+GREETING = 'Привет! Я твой Personal Shopper. Давай подберем новый гардероб. Пришли мне фотографию желаемого образа или опиши его.'
+LETS_FIND = 'Давай подберем новый образ. Загрузи фото или опиши желаемый образ.'
+DID_NOT_FIND = 'К сожалению, я не нашел ничего подходящего :(.'
+translation_table = str.maketrans({":": " ", "_": " "})
+
+# Language state
+class MyStateGroup(StatesGroup):
+    lan = State()
+    lets_find = State()
+    did_not_find = State()
 
 # Для текста
 model_name = "cointegrated/rubert-tiny2"
@@ -34,6 +50,8 @@ categories = ['up', 'bottom', 'full', 'shoes', 'acc', 'bag']
 length = 256
 with open("embeddings_256.pkl", "rb") as f:
     embeddings_text = pickle.load(f)
+translator = Translator(service_urls=['translate.google.com'])
+# translator = Translator(service_urls=['translate.googleapis.com'])
 
 # Для фото
 model_weights = 'fashion-pretrained-best.pt'
@@ -69,10 +87,14 @@ resnet = models.resnet50(pretrained=True).to(device)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
 resnet.eval()
 
+def translate(text : str, lan) :
+    return text if lan == 'ru' else translator.translate(text, dest=lan).text
+
 def generate_recommendations(query, embeddings):
     top_elements_per_query = defaultdict(lambda: defaultdict(list))
 
     for category in categories:
+
         query_tokens = tokenizer.encode_plus(
             query,
             add_special_tokens=True,
@@ -152,7 +174,7 @@ def get_clothes(img_path):
 
         class_id = round(box.cls[0].item())
         label = yolo_category[class_id]
-        conf = round(box.conf[0].item(), 2)
+        # conf = round(box.conf[0].item(), 2)
 
         cloth_img = image.crop(tuple(cords))
         cloth_imgs.append(cloth_img)
@@ -165,9 +187,9 @@ def get_clothes(img_path):
 preprocess = transforms.Compose([
         transforms.Resize(224),
         transforms.CenterCrop(224),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
-        transforms.RandomRotation(15),
-        transforms.RandomResizedCrop(size=224, scale=(0.8, 1.0)),
+        # transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
+        # transforms.RandomRotation(15),
+        # transforms.RandomResizedCrop(size=224, scale=(0.8, 1.0)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -256,19 +278,29 @@ async def save_image(image_bytes, file_name):
     with open(file_name, 'wb') as file:
         file.write(image_bytes)
 
+async def init_lan(state : FSMContext) :
+    await state.update_data(lan='ru')
+    await state.update_data(lets_find = LETS_FIND)
+    await state.update_data(did_not_find = DID_NOT_FIND)
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message, state: FSMContext):
-    user = message.from_user.username
-    text = f"Привет, @{user}! Я твой Personal Shopper. Давай подберем новый гардероб. Пришли мне фотографию желаемого образа или опиши его."
-    await message.reply(text)
+    init_lan(state)
+    await message.reply(GREETING)
 
-async def process_basket(message : types.Message, basket_df : pd.DataFrame) :
+async def process_basket(message : types.Message, 
+                         state : FSMContext,
+                         basket_df : pd.DataFrame) :
     response = ""
     images = []
 
+    data = await state.get_data()
+    if len(data) == 0 : 
+        await init_lan(state)
+        data = await state.get_data()
+
     for _, row in basket_df.iterrows():
-        name = row['name']
+        name = translate(row['name'], data['lan'])
         brand = row['brand']
         page_url = row['page_url']
         response += f"<a href='{page_url}'>{name}</a>\n{brand}\n\n"
@@ -288,23 +320,38 @@ async def process_basket(message : types.Message, basket_df : pd.DataFrame) :
         images.clear()
 
         # Reply with a new message
-        await message.reply(response, parse_mode='HTML', disable_web_page_preview=True)
-    else :
-        await message.reply("К сожалению, я не нашел ничего подходящего:(")
+        await message.reply(response, 
+                            parse_mode='HTML', 
+                            disable_web_page_preview=True)
     
-    await message.bot.send_message(message.from_user.id,
-                                   "Давай подберем новый образ. Загрузи фото или опиши желаемый образ.")
-
+    else :
+        await message.reply(data['did_not_find'])
 
 @dp.message_handler(content_types=types.ContentType.TEXT)
 async def process_text(message: types.Message, state: FSMContext):
-    
-    query = message.text.strip()
 
-    await state.update_data(outfit=query)  # Сохраняем ответ пользователя в переменной outfit
+    text = emoji.demojize(message.text.strip()).translate(translation_table)
+    query = translator.translate(text, dest='ru')
 
-    basket_df = generate_recommendations(query, embeddings_text)
-    await process_basket(message, basket_df)
+    # Сохраняем язык в переменной lan (если он изменился)
+    data = await state.get_data()
+    if len(data) == 0 : 
+        await init_lan(state)
+        data = await state.get_data()
+        
+
+    lets_find = data['lets_find']
+
+    if data['lan'] != query.src :
+        await state.update_data(lan = query.src)
+        did_not_find = translate(DID_NOT_FIND, query.src)
+        lets_find = translate(LETS_FIND, query.src)
+        await state.update_data(did_not_find = did_not_find)
+        await state.update_data(lets_find = lets_find) 
+
+    basket_df = generate_recommendations(query.text, embeddings_text)
+    await process_basket(message, state, basket_df)
+    await message.bot.send_message(message.from_user.id, lets_find)
 
 
 @dp.message_handler(content_types=types.ContentType.PHOTO)
@@ -321,8 +368,13 @@ async def process_photo(message: types.Message, state: FSMContext):
     photo_file_path = f"{folder_temporary}/{chat_id}_photo.jpg"  # Путь к файлу, в который будет сохранена фотография
     await photo_path.download(photo_file_path)
 
+    data = await state.get_data() 
+    if len(data) == 0 : 
+        await init_lan(state)
+        data = await state.get_data()
+
     cloth_imgs, cloth_info = get_clothes(photo_file_path)
-        
+
     if len(cloth_imgs) > 0 :  
   
         # Сохранение изображений в папку
@@ -343,9 +395,12 @@ async def process_photo(message: types.Message, state: FSMContext):
 
         flattened_paths = list(itertools.chain.from_iterable(saved_image_paths))
         basket_df = df[df['image_url_name'].isin(flattened_paths)] #тут исправить на image_url_t_name!!!!!!
-        await process_basket(message, basket_df)
+        await process_basket(message, state, basket_df)
     else :
-        await message.reply("К сожалению, я не нашел ничего подходящего:(")
+        await message.reply(data['did_not_find'])
+    
+    await message.bot.send_message(message.from_user.id, data['lets_find'])
+
 
 # handle the cases when this exception raises 
 @dp.errors_handler(exception=MessageNotModified)  
